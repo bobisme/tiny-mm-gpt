@@ -5,21 +5,34 @@ Minimal toy implementation of byte-pair encoding.
 from typing import DefaultDict
 from rich.console import Console
 from rich.table import Table
+import regex
 
 console = Console()
 
 VOCAB_SIZE = 300
 
 EXAMPLE_STRING = "Hello world! こんにちは世界！🌍 This is a test. これはテストです。"
+GPT2_SPLIT_PATTERN = regex.compile(
+    r"""'s|'t|'re|'ve|'m|'ll|'d| ?[\p{L}]+| ?[\p{N}]+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+)
 
 
-def get_pair_counts(text: str | list[int]) -> dict[tuple[int, int], int]:
-    if isinstance(text, str):
-        byte_list = [int(x) for x in text.encode("utf-8")]
-    else:
-        byte_list = text
-    pairs = list(zip(byte_list, byte_list[1:]))
+def get_pair_counts_from_text(text: str) -> dict[tuple[int, int], int]:
     counts = DefaultDict(int)
+    words: list[list[bytes]] = [
+        [bytes([b]) for b in word.encode("utf-8")]
+        for word in regex.findall(GPT2_SPLIT_PATTERN, text)
+    ]
+    for word in words:
+        pairs = list(zip(word, word[1:]))
+        for pair in pairs:
+            counts[pair] += 1
+    return counts
+
+
+def get_pair_counts_from_bytes(byte_list: list[int]) -> dict[tuple[int, int], int]:
+    counts = DefaultDict(int)
+    pairs = list(zip(byte_list, byte_list[1:]))
     for pair in pairs:
         counts[pair] += 1
     # return list(sorted(counts.items(), key=lambda kv: kv[1], reverse=True))
@@ -36,7 +49,7 @@ def examine_bytes(text: str):
     table.add_row("Length", str(len(byte_list)))
     console.print(table)
 
-    pairs_sorted = get_pair_counts(text)
+    pairs_sorted = get_pair_counts_from_text(text)
     console.print(pairs_sorted)
 
 
@@ -59,7 +72,7 @@ def replace_pair_with_token(tokens: list[int], pair: tuple[int, int], new_token:
 
 def encode(text: str) -> tuple[list[int], dict[tuple[int, int], int]]:
     merges = {}
-    counts = get_pair_counts(text)
+    counts = get_pair_counts_from_text(text)
     tokens = [int(x) for x in text.encode("utf-8")]
     new_token = 256
     pair = _get_max_pair(counts)
@@ -68,7 +81,7 @@ def encode(text: str) -> tuple[list[int], dict[tuple[int, int], int]]:
     while counts[pair] > 1 and new_token < VOCAB_SIZE:
         merges[pair] = new_token
         tokens = list(replace_pair_with_token(tokens, pair, new_token))
-        counts = get_pair_counts(tokens)
+        counts = get_pair_counts_from_bytes(tokens)
         pair = _get_max_pair(counts)
         new_token += 1
     return tokens, merges
