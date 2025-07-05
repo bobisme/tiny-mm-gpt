@@ -13,7 +13,8 @@ VOCAB_SIZE = 300
 
 EXAMPLE_STRING = "Hello world! こんにちは世界！🌍 This is a test. これはテストです。"
 GPT2_SPLIT_PATTERN = regex.compile(
-    r"""'s|'t|'re|'ve|'m|'ll|'d| ?[\p{L}]+| ?[\p{N}]+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    r"""'s|'t|'re|'ve|'m|'ll|'d| ?[\p{L}]+| ?[\p{N}]+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""",
+    regex.IGNORECASE,
 )
 
 
