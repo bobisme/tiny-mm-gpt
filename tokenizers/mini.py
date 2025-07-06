@@ -2,7 +2,9 @@
 Minimal toy implementation of byte-pair encoding.
 """
 
+from pathlib import Path
 from typing import DefaultDict
+import struct
 from rich.console import Console
 from rich.table import Table
 import regex
@@ -120,9 +122,9 @@ def decode(tokens: list[int], merges: dict[tuple[int, int], int]):
 
 
 class Tokenizer:
-    def __init__(self, vocab_size=VOCAB_SIZE) -> None:
+    def __init__(self, vocab_size=None) -> None:
         self._built = False
-        self.vocab_size = vocab_size
+        self.vocab_size = vocab_size or VOCAB_SIZE
         self.counts: DefaultDict[tuple[int, int], int] = DefaultDict(int)
         self.merges: list[tuple[tuple[int, int], int]] = []
         self.corpus: list[list[int]] = []
@@ -202,3 +204,78 @@ class Tokenizer:
                 yield from seq
 
         return bytes(gen()).decode("utf-8", errors="replace")
+
+
+def save_tokenizer(tokenizer: Tokenizer, path: Path | str):
+    """Save tokenizer to binary file.
+
+    Format:
+    [ 4 bytes file version (1) ]
+    [ 4 bytes for entry count ]
+    [ 8 bytes for pair [0][1] ][ 4 byte int value ]
+    [ 8 bytes for pair [0][1] ][ 4 byte int value ]
+    ...
+    """
+    if not tokenizer._built:
+        raise ValueError("Tokenizer must be built before saving")
+
+    with open(path, "wb") as f:
+        # Write file version
+        f.write(struct.pack("<I", 1))
+
+        # Write entry count
+        f.write(struct.pack("<I", len(tokenizer.merges)))
+
+        # Write merge entries
+        for pair, token in tokenizer.merges:
+            # Write pair (8 bytes: 4 bytes each for pair[0] and pair[1])
+            f.write(struct.pack("<II", pair[0], pair[1]))
+            # Write token value (4 bytes)
+            f.write(struct.pack("<I", token))
+
+
+def load_tokenizer(path: str) -> Tokenizer:
+    """Load tokenizer from binary file."""
+    with open(path, "rb") as f:
+        # Read file version
+        version_bytes = f.read(4)
+        if len(version_bytes) != 4:
+            raise ValueError("Invalid file format: missing version")
+        version = struct.unpack("<I", version_bytes)[0]
+
+        if version != 1:
+            raise ValueError(f"Unsupported file version: {version}")
+
+        # Read entry count
+        count_bytes = f.read(4)
+        if len(count_bytes) != 4:
+            raise ValueError("Invalid file format: missing entry count")
+        count = struct.unpack("<I", count_bytes)[0]
+
+        # Create new tokenizer
+        tokenizer = Tokenizer()
+        tokenizer._built = True
+        tokenizer.merges = []
+
+        # Read merge entries
+        for _ in range(count):
+            # Read pair (8 bytes)
+            pair_bytes = f.read(8)
+            if len(pair_bytes) != 8:
+                raise ValueError("Invalid file format: incomplete pair data")
+            pair0, pair1 = struct.unpack("<II", pair_bytes)
+
+            # Read token value (4 bytes)
+            token_bytes = f.read(4)
+            if len(token_bytes) != 4:
+                raise ValueError("Invalid file format: incomplete token data")
+            token = struct.unpack("<I", token_bytes)[0]
+
+            tokenizer.merges.append(((pair0, pair1), token))
+
+        # Build vocabulary mapping
+        tokenizer.vocab = {i: bytes([i]) for i in range(256)}
+        for pair, token in tokenizer.merges:
+            tokenizer.vocab[token] = tokenizer.vocab[pair[0]] + tokenizer.vocab[pair[1]]
+
+        return tokenizer
