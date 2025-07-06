@@ -18,12 +18,16 @@ GPT2_SPLIT_PATTERN = regex.compile(
 )
 
 
-def get_pair_counts_from_text(text: str) -> dict[tuple[int, int], int]:
-    counts = DefaultDict(int)
-    words: list[list[bytes]] = [
-        [bytes([b]) for b in word.encode("utf-8")]
+def str_to_ints(text: str) -> list[list[int]]:
+    return [
+        [int(b) for b in word.encode("utf-8")]
         for word in regex.findall(GPT2_SPLIT_PATTERN, text)
     ]
+
+
+def get_pair_counts_from_text(text: str) -> dict[tuple[int, int], int]:
+    counts = DefaultDict(int)
+    words = str_to_ints(text)
     for word in words:
         pairs = list(zip(word, word[1:]))
         for pair in pairs:
@@ -113,3 +117,88 @@ def decode(tokens: list[int], merges: dict[tuple[int, int], int]):
             yield from seq
 
     return bytes(gen()).decode("utf-8", errors="replace")
+
+
+class Tokenizer:
+    def __init__(self, vocab_size=VOCAB_SIZE) -> None:
+        self._built = False
+        self.vocab_size = vocab_size
+        self.counts: DefaultDict[tuple[int, int], int] = DefaultDict(int)
+        self.merges = {}
+        self.corpus: list[list[int]] = []
+
+    def add(self, text: str):
+        if self._built:
+            raise ValueError("Vocabulary already built")
+        self.corpus.extend(str_to_ints(text))
+
+    def build(self):
+        if self._built:
+            raise ValueError("Vocabulary already built")
+        self._built = True
+
+        # Count all pairs in the corpus
+        for word in self.corpus:
+            pairs = list(zip(word, word[1:]))
+            for pair in pairs:
+                self.counts[pair] += 1
+
+        # Build the vocabulary using BPE
+        new_token = 256
+        while new_token < self.vocab_size:
+            if not self.counts:
+                break
+
+            # Find the most frequent pair
+            pair = max(self.counts.items(), key=lambda kv: kv[1])[0]
+            if self.counts[pair] <= 1:
+                break
+
+            # Record the merge
+            self.merges[pair] = new_token
+
+            # Update the corpus by replacing the pair with new token
+            new_corpus = []
+            for word in self.corpus:
+                new_word = list(replace_pair_with_token(word, pair, new_token))
+                new_corpus.append(new_word)
+            self.corpus = new_corpus
+
+            # Recompute counts
+            self.counts = DefaultDict(int)
+            for word in self.corpus:
+                pairs = list(zip(word, word[1:]))
+                for pair in pairs:
+                    self.counts[pair] += 1
+
+            new_token += 1
+
+    def encode(self, text: str) -> list[int]:
+        if not self._built:
+            raise ValueError("Vocabulary not built yet. Call build() first.")
+
+        tokens = [int(x) for x in text.encode("utf-8")]
+
+        # Apply merges in order
+        for pair, new_token in self.merges.items():
+            tokens = list(replace_pair_with_token(tokens, pair, new_token))
+
+        return tokens
+
+    def decode(self, tokens: list[int]) -> str:
+        if not self._built:
+            raise ValueError("Vocabulary not built yet. Call build() first.")
+
+        # Build vocabulary mapping
+        vocab = {i: bytes([i]) for i in range(256)}
+
+        for pair, token in self.merges.items():
+            vocab[token] = vocab[pair[0]] + vocab[pair[1]]
+
+        # Decode tokens
+        def gen():
+            for token in tokens:
+                seq = vocab.get(token, [])
+                yield from seq
+
+        return bytes(gen()).decode("utf-8", errors="replace")
