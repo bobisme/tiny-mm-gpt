@@ -124,7 +124,7 @@ class Tokenizer:
         self._built = False
         self.vocab_size = vocab_size
         self.counts: DefaultDict[tuple[int, int], int] = DefaultDict(int)
-        self.merges = {}
+        self.merges: list[tuple[tuple[int, int], int]] = []
         self.corpus: list[list[int]] = []
 
     def add(self, text: str):
@@ -155,7 +155,7 @@ class Tokenizer:
                 break
 
             # Record the merge
-            self.merges[pair] = new_token
+            self.merges.append((pair, new_token))
 
             # Update the corpus by replacing the pair with new token
             new_corpus = []
@@ -173,6 +173,12 @@ class Tokenizer:
 
             new_token += 1
 
+        # Build vocabulary mapping
+        self.vocab = {i: bytes([i]) for i in range(256)}
+
+        for pair, token in self.merges:
+            self.vocab[token] = self.vocab[pair[0]] + self.vocab[pair[1]]
+
     def encode(self, text: str) -> list[int]:
         if not self._built:
             raise ValueError("Vocabulary not built yet. Call build() first.")
@@ -180,7 +186,7 @@ class Tokenizer:
         tokens = [int(x) for x in text.encode("utf-8")]
 
         # Apply merges in order
-        for pair, new_token in self.merges.items():
+        for pair, new_token in self.merges:
             tokens = list(replace_pair_with_token(tokens, pair, new_token))
 
         return tokens
@@ -189,16 +195,10 @@ class Tokenizer:
         if not self._built:
             raise ValueError("Vocabulary not built yet. Call build() first.")
 
-        # Build vocabulary mapping
-        vocab = {i: bytes([i]) for i in range(256)}
-
-        for pair, token in self.merges.items():
-            vocab[token] = vocab[pair[0]] + vocab[pair[1]]
-
         # Decode tokens
         def gen():
             for token in tokens:
-                seq = vocab.get(token, [])
+                seq = self.vocab.get(token, [])
                 yield from seq
 
         return bytes(gen()).decode("utf-8", errors="replace")
